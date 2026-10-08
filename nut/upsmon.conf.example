@@ -1,0 +1,41 @@
+RUN_AS_USER root
+
+MONITOR qnapups@localhost 1 upsmonitor EXAMPLE_MONITOR_PASSWORD primary
+MINSUPPLIES 1
+
+# NUT is deliberately NOT the final Proxmox host-shutdown authority.
+# PVE-UPS owns the final host shutdown.
+SHUTDOWNCMD "/usr/bin/logger -t nut-event 'NUT requested host shutdown; ignored because PVE-UPS owns host shutdown'"
+
+POLLFREQ 4
+POLLFREQALERT 2
+HOSTSYNC 15
+DEADTIME 24
+FINALDELAY 30
+
+NOTIFYCMD /usr/local/sbin/nut-event-handler.sh
+
+NOTIFYMSG ONLINE   "UPS %s on line power"
+NOTIFYMSG ONBATT   "UPS %s on battery"
+NOTIFYMSG LOWBATT  "UPS %s battery is low"
+NOTIFYMSG FSD      "UPS %s: forced shutdown requested"
+NOTIFYMSG COMMOK   "Communications with UPS %s established"
+NOTIFYMSG COMMBAD  "Communications with UPS %s lost"
+NOTIFYMSG SHUTDOWN "NUT shutdown condition reached"
+NOTIFYMSG REPLBATT "UPS %s battery needs to be replaced"
+NOTIFYMSG NOCOMM   "UPS %s is unavailable"
+NOTIFYMSG NOPARENT "upsmon parent process died"
+
+NOTIFYFLAG ONLINE   SYSLOG+WALL+EXEC
+NOTIFYFLAG ONBATT   SYSLOG+WALL+EXEC
+NOTIFYFLAG LOWBATT  SYSLOG+WALL+EXEC
+NOTIFYFLAG FSD      SYSLOG+WALL+EXEC
+NOTIFYFLAG COMMOK   SYSLOG+WALL+EXEC
+NOTIFYFLAG COMMBAD  SYSLOG+WALL+EXEC
+NOTIFYFLAG SHUTDOWN SYSLOG+WALL+EXEC
+NOTIFYFLAG REPLBATT SYSLOG+WALL
+NOTIFYFLAG NOCOMM   SYSLOG+WALL+EXEC
+NOTIFYFLAG NOPARENT SYSLOG+WALL
+
+RBWARNTIME 43200
+NOCOMMWARNTIME 600

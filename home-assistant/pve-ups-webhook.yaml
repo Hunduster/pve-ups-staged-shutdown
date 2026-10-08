@@ -1,0 +1,78 @@
+# Example Home Assistant automation for PVE-UPS JSON webhooks.
+# Replace the webhook_id and notification script with your own values.
+alias: PVE-UPS notifications
+description: Receives PVE-UPS events and forwards concise notifications.
+triggers:
+  - trigger: webhook
+    webhook_id: REPLACE_WITH_RANDOM_WEBHOOK_ID
+    allowed_methods:
+      - POST
+    local_only: true
+actions:
+  - variables:
+      subject: "{{ trigger.json.subject | default('PVE-UPS') }}"
+      body: "{{ trigger.json.body | default('No message') }}"
+      severity: "{{ trigger.json.severity | default('info') }}"
+      ups: "{{ (trigger.json.status.ups | default([{}]))[0] }}"
+      shutdown: "{{ trigger.json.status.shutdown | default({}) }}"
+      power_source: "{{ ups.power_source | default('unknown') }}"
+      battery_charge: "{{ ups.battery_charge_pct | default(none) }}"
+      runtime: "{{ ups.runtime_remaining_min | default(none) }}"
+      shutdown_triggered: "{{ shutdown.triggered | default(false) }}"
+      shutdown_reason: "{{ shutdown.reason | default(none) }}"
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ 'Test notification' in subject }}"
+        sequence:
+          - action: script.REPLACE_WITH_NOTIFICATION_SCRIPT
+            data:
+              title: "🧪 PVE-UPS: Test"
+              message: "The PVE-UPS → Home Assistant notification path works."
+      - conditions:
+          - condition: template
+            value_template: "{{ power_source == 'battery' and not shutdown_triggered }}"
+        sequence:
+          - action: script.REPLACE_WITH_NOTIFICATION_SCRIPT
+            data:
+              title: "⚡ UPS: Power outage"
+              message: >-
+                The UPS is running on battery.
+                {% if battery_charge is not none %}Charge: {{ battery_charge }} %.{% endif %}
+                {% if runtime is not none %}Estimated runtime: {{ runtime }} minutes.{% endif %}
+      - conditions:
+          - condition: template
+            value_template: "{{ shutdown_triggered }}"
+        sequence:
+          - action: script.REPLACE_WITH_NOTIFICATION_SCRIPT
+            data:
+              title: "🛑 UPS: Proxmox shutdown"
+              message: >-
+                PVE-UPS triggered the controlled Proxmox host shutdown.
+                {% if shutdown_reason %}Reason: {{ shutdown_reason }}.{% endif %}
+                {% if battery_charge is not none %}Charge: {{ battery_charge }} %.{% endif %}
+                {% if runtime is not none %}Runtime: {{ runtime }} minutes.{% endif %}
+      - conditions:
+          - condition: template
+            value_template: "{{ power_source == 'mains' }}"
+        sequence:
+          - action: script.REPLACE_WITH_NOTIFICATION_SCRIPT
+            data:
+              title: "🔌 UPS: Utility power restored"
+              message: >-
+                Utility power is available again.
+                {% if battery_charge is not none and battery_charge < 100 %}
+                The UPS is charging. Current charge: {{ battery_charge }} %.
+                {% else %}
+                The UPS is back in normal line operation.
+                {% endif %}
+    default:
+      - action: script.REPLACE_WITH_NOTIFICATION_SCRIPT
+        data:
+          title: >-
+            {% if severity == 'critical' %}🔴 PVE-UPS
+            {% elif severity == 'warning' %}⚠️ PVE-UPS
+            {% else %}ℹ️ PVE-UPS{% endif %}
+          message: "{{ subject }}\n{{ body }}"
+mode: queued
+max: 10

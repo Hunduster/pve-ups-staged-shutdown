@@ -1,0 +1,16 @@
+#!/bin/bash
+set -u
+
+COMMAND="${1:-unknown}"
+
+case "$COMMAND" in
+    ups-stage1)
+        logger -t upssched-cmd -- "UPS has remained on battery for 600 seconds. Triggering Stage 1."
+        /usr/local/sbin/ups-stage1.sh --execute
+        ;;
+    *)
+        logger -t upssched-cmd -- "Unknown upssched command: ${COMMAND}"
+        ;;
+esac
+
+exit 0

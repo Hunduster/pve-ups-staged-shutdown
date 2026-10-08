@@ -1,0 +1,7 @@
+*.log
+*.bak
+*.swp
+.env
+.env.*
+secrets.yaml
+*.secret

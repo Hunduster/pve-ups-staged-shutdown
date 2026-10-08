@@ -1,0 +1,11 @@
+# Example monitor account used by local upsmon.
+# Replace EXAMPLE_MONITOR_PASSWORD before use.
+[upsmonitor]
+    password = EXAMPLE_MONITOR_PASSWORD
+    upsmon primary
+
+# QNAP compatibility values may depend on QTS/model/firmware.
+# PVE-UPS documents qnapups/admin/123456 for QNAP NUT compatibility.
+[admin]
+    password = 123456
+    upsmon secondary
