@@ -4,7 +4,9 @@ A reference implementation for safely shutting down a **single-node Proxmox VE e
 
 The key problem is shutdown ordering:
 
-**NAS-dependent guests must stop before the NAS, while the NAS should stop early enough to reduce UPS load before the final hypervisor shutdown.**
+**NAS-dependent guests must stop before the NAS, and the NAS must stop before the Proxmox host because the Proxmox host also provides its NUT/UPS status.**
+
+A useful side effect is that shutting down the NAS also removes one of the largest loads from the UPS before the final hypervisor shutdown.
 
 This project combines:
 
@@ -25,7 +27,7 @@ Power failure
     ├─ 10 min    │ Gracefully stop `ups-aware` guests
     │            │ (primarily NAS/NFS-dependent workloads)
     │
-    ├─ 15 min    │ NAS shuts down
+    ├─ 15 min    │ NAS shuts down while NUT is still available
     │            │ → major UPS load disappears
     │
     └─ 20 min    │ PVE-UPS shuts down Proxmox
@@ -48,54 +50,63 @@ The NAS in this setup is not just another device connected to the UPS.
 
 It provides NFS storage to multiple VMs and LXC containers running on the Proxmox host. Some guests actively read from and write to these mounts during normal operation.
 
-This creates a shutdown dependency:
+This creates the first shutdown dependency:
 
 **The NAS must remain available until its dependent guests have stopped.**
 
-Shutting down the NAS early would reduce UPS load, but it could also make NFS storage disappear underneath running applications. Depending on the workload, this can result in I/O errors, hung processes, interrupted writes or application data corruption.
+Shutting down the NAS too early would reduce UPS load, but it could also make NFS storage disappear underneath running applications. Depending on the workload, this can result in I/O errors, hung processes, interrupted writes or application data corruption.
 
-Keeping the NAS running until the final Proxmox shutdown solves the dependency problem, but creates another problem: in this environment, the NAS is one of the largest loads on the UPS.
+There is also a second dependency in the opposite direction:
 
-Keeping it powered for the entire outage unnecessarily reduces the remaining battery reserve.
+**The NUT server itself runs on the Proxmox host.**
+
+The NAS is configured as a network UPS client and receives its UPS state from that NUT server. If the Proxmox host shuts down first, the NUT server disappears with it.
+
+A lost connection to the NUT server must not be treated as a reliable substitute for an actual UPS shutdown event. The NAS therefore needs to complete its own UPS-triggered shutdown **while the Proxmox host and its NUT server are still running**.
+
+This creates a dependency chain:
+
+```text
+NAS-dependent guests
+        │
+        │ need NFS
+        ▼
+       NAS
+        │
+        │ needs NUT status
+        ▼
+NUT / Proxmox host
+```
+
+The shutdown sequence therefore has to respect this order:
+
+```text
+storage clients → storage server → NUT server / hypervisor
+```
+
+There is also a useful secondary benefit: in this environment, the NAS is one of the largest loads on the UPS. Shutting it down before the hypervisor significantly reduces UPS load and leaves more battery reserve for the final Proxmox shutdown.
 
 The solution is a staged shutdown:
 
 ```text
-                         ┌──────────────────┐
-                         │       NAS        │
-                         │    NFS server    │
-                         └────────▲─────────┘
-                                  │
-                             NFS mounts
-                                  │
-                    ┌─────────────┼─────────────┐
-                    │             │             │
-                 VM / CT       VM / CT       VM / CT
-               [ups-aware]   [ups-aware]   [ups-aware]
-
-
 Power outage
      │
      ├─ 0–10 min  → keep everything running
      │
      ├─ 10 min    → gracefully stop NAS-dependent guests
      │
-     ├─ 15 min    → NAS can now shut down
+     ├─ 15 min    → NAS shuts down while NUT is still available
      │
      └─ 20 min    → PVE-UPS shuts down the Proxmox host
 ```
 
 This gives NAS-dependent guests five minutes to shut down while their storage is still available.
 
-Once those clients no longer need the NAS, the NAS can power off and significantly reduce the load on the UPS.
+The NAS then has another five minutes to perform its own shutdown while the NUT server on the Proxmox host is still alive.
 
-The fundamental dependency order is:
+Only after both dependency stages have had time to complete does PVE-UPS request the final hypervisor shutdown.
 
-```text
-storage clients → storage server → hypervisor
-```
-
-That is the main idea behind this repository.
+That dependency ordering is the main idea behind this repository.
 
 ---
 
@@ -103,20 +114,35 @@ That is the main idea behind this repository.
 
 A normal Proxmox host shutdown already shuts down its guests before powering off the host.
 
-That is useful, but it does not solve the complete problem in this setup.
+That alone is not sufficient in this setup because the NAS is external to Proxmox and uses the Proxmox host itself as its NUT server.
 
-The NAS has its **own UPS client and shutdown timer**. It is not controlled by the Proxmox guest shutdown process.
+If Proxmox shuts down before the NAS:
 
-If the NAS shuts down too early, running guests can lose their NFS mounts.
+1. the NUT server disappears,
+2. the NAS loses its UPS status source,
+3. the NAS can no longer rely on that NUT server to complete the intended delayed UPS shutdown.
 
-If the NAS waits until the Proxmox host finally shuts down, it remains one of the largest UPS loads for longer than necessary.
+The NAS therefore has to shut down **before the Proxmox host**, but it cannot shut down before the guests that depend on its NFS exports.
 
-Stage 1 bridges that gap:
+This creates the central ordering problem solved by Stage 1:
 
-1. keep everything running during short outages,
-2. stop storage-dependent guests first,
-3. let the NAS shut down,
-4. let PVE-UPS perform the final hypervisor shutdown later.
+```text
+NAS-dependent guests
+        │
+        ▼
+       NAS
+        │
+        ▼
+NUT server / Proxmox host
+```
+
+Stage 1 solves the first dependency by stopping NAS clients early.
+
+The NAS's own UPS timer solves the second dependency by shutting the NAS down while NUT is still alive.
+
+PVE-UPS then performs the final Proxmox shutdown only after both stages have had time to complete.
+
+This ordering also has the useful side effect of removing the NAS, one of the largest UPS loads in this environment, before the final hypervisor shutdown.
 
 ---
 
